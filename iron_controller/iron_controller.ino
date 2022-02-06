@@ -3,6 +3,8 @@
 #include "esp_adc_cal.h"
 #include "ArduPID.h"
 
+#include <BluetoothSerial.h>
+#include <JsonParser.h>
 
 ArduPID pidController_1;
 ArduPID pidController_2;
@@ -11,6 +13,7 @@ ArduPID pidController_2;
 #define D3 4
 #define D5 15
 SSD1306Wire  oled(0x3c, D3, D5);
+BluetoothSerial serialBT;
 
 static esp_adc_cal_characteristics_t adc1_chars;
 esp_adc_cal_value_t val_type;
@@ -35,7 +38,7 @@ const float i = 0.5;
 const float d = 3;
 
 #define SET_POINT_1 70
-#define SET_POINT_2 60
+#define SET_POINT_2 80
 
 void setupPins(){
    // configure LED PWM functionalitites
@@ -88,6 +91,7 @@ void setup() {
     setupPins();
     setupPIDs();
     Serial.begin(115200);//initialize the serial monitor
+    serialBT.begin("TailorsIron"); //Bluetooth device name
     setupADC();
 }
 
@@ -115,14 +119,57 @@ void loop() {
   pidInput_1=temp1;
   pidController_1.compute();
   displayOutput(pidOutput_1,1);
-  
   ledcWrite(PWM_CHANNEL_1, pidOutput_1);
 
   pidInput_2=temp2;
   pidController_2.compute();
   displayOutput(pidOutput_2,2);
-
   ledcWrite(PWM_CHANNEL_2, pidOutput_2);
+  processBT();
+}
+
+
+JsonParser<100> parser;
+
+void processBT(){
+  if (serialBT.available()) {
+    char * command=read_from_BT();
+    Serial.println("Received from bluetooth");
+    Serial.println(command);
+    //char * nl=strchr(command,'\n');
+    //if (NULL != nl && nl < command+BT_BUFFER_SIZE){
+    //  *nl='\0';
+    //}
+    JsonHashTable parametersHash = parser.parseHashTable(command);
+    if (!parametersHash.success())
+    {
+        Serial.println("parsing failed");
+    } else {
+        Serial.println("command executed");
+    }
+  }
+}
+  
+char * read_from_BT() {
+  #define BT_BUFFER_SIZE 200
+  static char buffer[BT_BUFFER_SIZE];
+  bool go=true;
+  int i=0;
+  char c;
+  while (go){
+    if (serialBT.available()){
+      c=serialBT.read();
+      buffer[i++]=c;
+    }
+    if (c==0) {
+      return buffer;
+    }
+    if (c=='\n' && i>0) {
+      buffer[i-1]='\0';
+      return buffer;
+    }
+    delay(2);
+  }
 }
 
 
@@ -168,8 +215,12 @@ void displayTemperature(short temp, int lineNo) {
 void displayOutput(short value, int lineNo) {
   char valueStr[30];
 
+  oled.setColor(BLACK);
+  oled.fillRect(40,20+10* lineNo,80,9);
+  oled.setColor(WHITE);
+  oled.drawProgressBar(40,22+10* lineNo,80,8,value*100/255);
   sprintf(valueStr,"%3hd",value);
-  displayAt(10, lineNo + 2, 40, valueStr);
+  displayAt(1, lineNo + 2, 39, valueStr);
 }
 
 unsigned short rawToVoltagemV(unsigned short rawValue){
