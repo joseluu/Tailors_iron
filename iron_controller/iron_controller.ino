@@ -2,6 +2,7 @@
 #include <math.h> 
 #include "esp_adc_cal.h"
 #include "ArduPID.h"
+#include "EEPROM.h"
 
 #include <BluetoothSerial.h>
 #include <JsonParser.h>
@@ -14,6 +15,8 @@ ArduPID pidController_2;
 #define D5 15
 SSD1306Wire  oled(0x3c, D3, D5);
 BluetoothSerial serialBT;
+EEPROMClass  parametersStorage("eeprom", 0x500);
+
 
 static esp_adc_cal_characteristics_t adc1_chars;
 esp_adc_cal_value_t val_type;
@@ -40,6 +43,41 @@ const float d = 3;
 #define SET_POINT_1 70
 #define SET_POINT_2 80
 
+class CIronParameters {
+  public:
+  char name[64];
+  unsigned short temp1;
+  unsigned short temp2;
+};
+
+CIronParameters g_ironParameters;
+
+void initializeIronParameters()
+{
+  strcpy(g_ironParameters.name,"TailorsIron");
+  g_ironParameters.temp1 = 150;
+  g_ironParameters.temp2 = 150;
+}
+
+
+void setupStorage(){
+    if (!parametersStorage.begin(parametersStorage.length())) {
+    Serial.println("Failed to initialise parametersStorage");
+    Serial.println("Restarting...");
+    delay(1000);
+    ESP.restart();
+  }
+
+  parametersStorage.get(0,g_ironParameters);
+  if (g_ironParameters.temp1 < 50 || g_ironParameters.temp1 > 250) {
+    Serial.println("Forcing uninitialized parameters");
+    initializeIronParameters(); // restore defaults
+    parametersStorage.put(0,g_ironParameters);
+    parametersStorage.commit();
+  } else {
+    Serial.println("Stored parameters are OK");
+  }
+}
 void setupPins(){
    // configure LED PWM functionalitites
   ledcSetup(PWM_CHANNEL_1, freq, resolution);
@@ -88,6 +126,7 @@ void setupADC(){
 
 void setup() {
     oledSetup();
+    setupStorage();
     setupPins();
     setupPIDs();
     Serial.begin(115200);//initialize the serial monitor
@@ -264,5 +303,6 @@ void oledSetup(void) {
   oled.setFont(ArialMT_Plain_10);
   oled.setTextAlignment(TEXT_ALIGN_LEFT);
   oled.drawString(0 , 0, "START" );
+  oled.drawString(0 , 50, &g_ironParameters.name[0]);
   oled.display();
 }
