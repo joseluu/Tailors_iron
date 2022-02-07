@@ -76,6 +76,7 @@ void setupStorage(){
     parametersStorage.commit();
   } else {
     Serial.println("Stored parameters are OK");
+    Serial.println(g_ironParameters.name);
   }
 }
 void setupPins(){
@@ -125,11 +126,11 @@ void setupADC(){
 }
 
 void setup() {
+    Serial.begin(115200);//initialize the serial monitor
     oledSetup();
     setupStorage();
     setupPins();
     setupPIDs();
-    Serial.begin(115200);//initialize the serial monitor
     serialBT.begin("TailorsIron"); //Bluetooth device name
     setupADC();
 }
