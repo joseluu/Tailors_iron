@@ -45,7 +45,7 @@ esp_adc_cal_value_t val_type;
 time_t endOfSessionTime = 1800; // default is 30mn
 
 // setting PWM properties
-const int freq = 100;
+const int freq = 1;
 const int resolution = 8;
 const int PWM_CHANNEL_1 = 1;
 const int PWM_CHANNEL_2 = 1;
@@ -230,8 +230,8 @@ void loop() {
   pidController_2.compute();
 
   if (! bDoRegulation) { // debug mode
-    pidOutput_1 = (bDebugForcePower1 ? 255 : 0);
-    pidOutput_2 = (bDebugForcePower2 ? 255 : 0);
+    pidOutput_1 = (bDebugForcePower1 ? (pidSetpoint_1-50)*255/200 : 0);
+    pidOutput_2 = (bDebugForcePower2 ? (pidSetpoint_2-50)*255/200 : 0);
   }
   displayOutput(pidOutput_1, 1);
   displayOutput(pidOutput_2, 2);
@@ -288,6 +288,7 @@ void processBT(short temp1, short temp2, short tempInternal) {
       Serial.print("newSetEndOfSession: ");
       Serial.println(newSetEndOfSession);
       endOfSessionTime = now() + newSetEndOfSession;
+      bTimedPowerState = true;
       Serial.print("endOfSessionTime: ");
       Serial.println(endOfSessionTime);
     }
@@ -295,7 +296,7 @@ void processBT(short temp1, short temp2, short tempInternal) {
     if (bNewDebugDisplay) {
       bDebugDisplay = bNewDebugDisplay;
     }
-    int bNewForcePowerState = receivedJson["commands"]["powerState"];
+    bool bNewForcePowerState = receivedJson["commands"]["powerState"];
     bForcePowerState = bNewForcePowerState;
   } else {
     static unsigned int previousSendTime;
@@ -319,6 +320,8 @@ void processBT(short temp1, short temp2, short tempInternal) {
       sendJson["status"]["internalFan"] = 20;
       sendJson["status"]["debugDisplay"] = bDebugDisplay;
       sendJson["status"]["powerState"] = bTimedPowerState && bForcePowerState;
+      sendJson["status"]["timedPowerState"] = bTimedPowerState;
+      sendJson["status"]["forcedPowerState"] = bForcePowerState;
       sendJson["status"]["debug"] = ! bDoRegulation;
       sendJson["status"]["force1"] = bDebugForcePower1;
       sendJson["status"]["force2"] = bDebugForcePower2;
@@ -374,7 +377,6 @@ const float R1 = 100000.0f; // thermistor type
 const float beta = 4300.0f; // from thermistor data or measurements
 
 const float mVIncrement = 0.953f;  // ESP32 ADV using default -11db setting (4095 is 1.1V without attenuation)
-
 
 void displayVoltage(short voltage, int lineNo) {
   char voltageStr[30];
