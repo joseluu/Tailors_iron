@@ -29,6 +29,7 @@ ArduPID pidController_2;
 SSD1306Wire  oled(0x3c, D3, D5);
 BluetoothSerial serialBT;
 EEPROMClass  parametersStorage("eeprom", 0x500);
+#define FORCE_FLASH_INIT false
 
 
 static esp_adc_cal_characteristics_t adc1_chars;
@@ -48,7 +49,7 @@ time_t endOfSessionTime = 1800; // default is 30mn
 const int freq = 1;
 const int resolution = 8;
 const int PWM_CHANNEL_1 = 1;
-const int PWM_CHANNEL_2 = 1;
+const int PWM_CHANNEL_2 = 2;
 
 bool bDoRegulation = true;
 bool bDebugForcePower1 = false;
@@ -74,7 +75,7 @@ CIronParameters g_ironParameters;
 
 void initializeIronParameters()
 {
-  strcpy(g_ironParameters.name, "TailorsIron");
+  strcpy(g_ironParameters.name, "Fer de Lisa");
   g_ironParameters.temp1 = 150;
   g_ironParameters.temp2 = 150;
 }
@@ -89,7 +90,7 @@ void setupStorage() {
   }
 
   parametersStorage.get(0, g_ironParameters);
-  if (g_ironParameters.temp1 < 50 || g_ironParameters.temp1 > 250) {
+  if (FORCE_FLASH_INIT || g_ironParameters.temp1 < 50 || g_ironParameters.temp1 > 250) {
     Serial.println("Forcing uninitialized parameters");
     initializeIronParameters(); // restore defaults
     parametersStorage.put(0, g_ironParameters);
@@ -161,7 +162,7 @@ void serialBT_SPP_callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param) 
 }
 
 void setupBT() {
-  bool bStatus = serialBT.begin("TailorsIron"); //Bluetooth device name
+  bool bStatus = serialBT.begin(g_ironParameters.name); //Bluetooth device name
   if (! bStatus ) {
     Serial.println("Serial BT initialization failure");
   }
@@ -369,12 +370,12 @@ unsigned short readRaw(int input) {
   return rawReading / NO_OF_SAMPLES;
 }
 
-const float Vdd = 3.306f;
-const float R0 = 1200.0f; // measured
+const float Vdd = 3.333f;
+const float R0 = 3900.0f; // measured
 const float Tz = 273.15f;
 const float Tc1 = 25.0f + Tz; // thermistor calibration point
-const float R1 = 100000.0f; // thermistor type
-const float beta = 4300.0f; // from thermistor data or measurements
+const float R1 = 96000.0f; // thermistor type
+const float beta = 3950.0f; // from thermistor data or measurements
 
 const float mVIncrement = 0.953f;  // ESP32 ADV using default -11db setting (4095 is 1.1V without attenuation)
 
