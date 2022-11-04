@@ -52,9 +52,11 @@ const int PWM_CHANNEL_1 = 1;
 const int PWM_CHANNEL_2 = 2;
 
 bool bDoRegulation = true;
-bool bDebugForcePower1 = false;
-bool bDebugForcePower2 = false;
-
+bool bDebugDisplay = false;
+bool bDebugForcePowerOff1 = false;
+bool bDebugForcePowerOff2 = false;
+bool bDebugForcePowerOn1 = false;
+bool bDebugForcePowerOn2 = false;
 
 
 const float p = 20;
@@ -174,6 +176,20 @@ void setupTime() {
   setTime(0);
 }
 
+bool bForcePowerState = true;
+bool bTimedPowerState;
+
+bool bSafetyActivated = false;
+bool bStartedSafetyCount = false;
+int safetyCount = 0;
+
+int power1;
+int power2;
+#define POWERDIPLAYSIZE 15
+char powerDisplay[POWERDIPLAYSIZE];
+
+int previousProgress;
+
 void setup() {
   Serial.begin(115200);//initialize the serial monitor
   oledSetup();
@@ -184,17 +200,12 @@ void setup() {
   setupADC();
   setupTime();
 }
-
-bool bForcePowerState = true;
-bool bTimedPowerState;
-int power1;
-int power2;
-
+    
 void doPowerControl() {
 
     bTimedPowerState = (now() < endOfSessionTime);
 
-    if (bTimedPowerState && bForcePowerState) { // both conditions needed for power On
+    if (bTimedPowerState && bForcePowerState && ! bSafetyActivated) { // all conditions needed for power On
       power1 = pidOutput_1;
       power2 = pidOutput_2;
     } else {
@@ -205,6 +216,25 @@ void doPowerControl() {
     ledcWrite(PWM_CHANNEL_2, power2);
 }
 
+
+void doSafetyCount(short temp1, short temp2){
+  if (temp1 > 40 && temp2 > 40) { // temperature measurement is working
+    bSafetyActivated = false;
+    bStartedSafetyCount = false;
+  }
+  if (safetyCount > 6000) { 
+    bSafetyActivated = true;
+    return;
+  }
+  if (temp1 < 40 || temp2 < 40) {
+    if (bStartedSafetyCount) {
+      safetyCount++;
+    } else {
+      bStartedSafetyCount = true;
+      safetyCount = 0;
+    }
+  }
+}
 void loop() {
   unsigned short raw;
   raw = readRaw(TEMP_INPUT_PIN_1);
@@ -221,6 +251,7 @@ void loop() {
   short temp2 = voltageToTemperature(mV);
   displayTemperature(temp2, 2);
 
+  doSafetyCount(temp1, temp2);
   short tempInternal = temperatureInternal();
 
   delay (100);
@@ -231,22 +262,55 @@ void loop() {
   pidController_2.compute();
 
   if (! bDoRegulation) { // debug mode
-    pidOutput_1 = (bDebugForcePower1 ? (pidSetpoint_1-50)*255/200 : 0);
-    pidOutput_2 = (bDebugForcePower2 ? (pidSetpoint_2-50)*255/200 : 0);
+    pidOutput_1 = (bDebugForcePowerOff1 ? 0 : (bDebugForcePowerOn1 ? 255 : (pidSetpoint_1-50)*255/200 ));
+    pidOutput_2 = (bDebugForcePowerOff2 ? 0 : (bDebugForcePowerOn2 ? 255 : (pidSetpoint_2-50)*255/200 ));
   }
   displayOutput(pidOutput_1, 1);
   displayOutput(pidOutput_2, 2);
 
   doPowerControl();
+  standardDisplay(temp1,temp2,pidSetpoint_1, pidSetpoint_2, bTimedPowerState, endOfSessionTime - now());
+  doPowerDisplay();
+  
   processBT(temp1, temp2, tempInternal);
 }
 
+void doPowerDisplay(){
+  int c=0;
+
+  if (bSafetyActivated) { // Malfunction
+    powerDisplay[c++]='M';
+    powerDisplay[c++]='a';
+    powerDisplay[c++]='l';
+  } else {
+    powerDisplay[c++]='O';
+    if (bTimedPowerState && bForcePowerState) {
+      powerDisplay[c++]='n';
+      powerDisplay[c++]=' ';
+    } else {
+      powerDisplay[c++]='f';
+      powerDisplay[c++]='f';
+    }
+  }
+  powerDisplay[c++]=' ';
+  powerDisplay[c++]=' ';
+  powerDisplay[c++]=' ';
+  powerDisplay[c++]=' ';
+  powerDisplay[c++]=' ';
+  if (power1 < 128)  powerDisplay[c++]='-';
+  if (power1 >= 128)  powerDisplay[c++]='+';
+  powerDisplay[c++]=' ';
+  powerDisplay[c++]=' ';
+  if (power2 < 128)  powerDisplay[c++]='-';
+  if (power2 >= 128)  powerDisplay[c++]='+';
+  powerDisplay[c++]=0;
+  standardDisplayText2(powerDisplay);
+}
 
 char json_test[] =
   "{\"commands\": [ {\"setPoint1\": 150 }, { \"setPoint2:\": 150 }, { \"setTime\": \"15:45:41\""
   "}, { \"setEndOfSession\": \"16:45:34\" } ]                                               }";
 
-bool bDebugDisplay = true;
 int bDataRequested = 0;
 
 void processBT(short temp1, short temp2, short tempInternal) {
@@ -267,13 +331,21 @@ void processBT(short temp1, short temp2, short tempInternal) {
       Serial.println("Client needs data");
       return;
     } 
-    bDoRegulation = ! receivedJson["commands"]["debug"];
-    if (! bDoRegulation) { // debug mode
-      bDebugForcePower1 = receivedJson["commands"]["force1"];
-      bDebugForcePower2 = receivedJson["commands"]["force2"];
-    }
+    bDebugDisplay = receivedJson["commands"]["debug"];
+
+    bDebugForcePowerOn1 = receivedJson["commands"]["forceOn1"];
+    bDebugForcePowerOn2 = receivedJson["commands"]["forceOn2"];
+    bDebugForcePowerOff1 = receivedJson["commands"]["forceOff1"];
+    bDebugForcePowerOff2 = receivedJson["commands"]["forceOff2"];
+    bDoRegulation = ! (bDebugForcePowerOn1 ||
+              bDebugForcePowerOn2 ||
+              bDebugForcePowerOff1 ||
+              bDebugForcePowerOff2);
+              
     int newSetPoint1 = receivedJson["commands"]["setPoint1"];
     int newSetPoint2 = receivedJson["commands"]["setPoint2"];
+      Serial.print("setPoint1 received: ");   
+      Serial.println(newSetPoint1);
     if (newSetPoint1 != 0 && newSetPoint2 != 0) {
       if ((newSetPoint1 != g_ironParameters.temp1) ||
           (newSetPoint2 != g_ironParameters.temp2)) {
@@ -294,10 +366,14 @@ void processBT(short temp1, short temp2, short tempInternal) {
       Serial.println(endOfSessionTime);
     }
     int bNewDebugDisplay = receivedJson["commands"]["debugDisplay"];
+    if (bDebugDisplay != bNewDebugDisplay) {
+       displayFullErase();
+       previousProgress = 0; // reset time progress bar
+    }
     if (bNewDebugDisplay) {
       bDebugDisplay = bNewDebugDisplay;
     }
-    bool bNewForcePowerState = receivedJson["commands"]["powerState"];
+    bool bNewForcePowerState = receivedJson["commands"]["forcePowerState"];
     bForcePowerState = bNewForcePowerState;
   } else {
     static unsigned int previousSendTime;
@@ -320,12 +396,13 @@ void processBT(short temp1, short temp2, short tempInternal) {
       sendJson["status"]["temperatureProcessor"] = tempInternal;
       sendJson["status"]["internalFan"] = 20;
       sendJson["status"]["debugDisplay"] = bDebugDisplay;
-      sendJson["status"]["powerState"] = bTimedPowerState && bForcePowerState;
+      sendJson["status"]["forcePowerState"] = bForcePowerState;
       sendJson["status"]["timedPowerState"] = bTimedPowerState;
-      sendJson["status"]["forcedPowerState"] = bForcePowerState;
       sendJson["status"]["debug"] = ! bDoRegulation;
-      sendJson["status"]["force1"] = bDebugForcePower1;
-      sendJson["status"]["force2"] = bDebugForcePower2;
+      sendJson["status"]["forceOn1"] = bDebugForcePowerOn1;
+      sendJson["status"]["forceOn2"] = bDebugForcePowerOn2;
+      sendJson["status"]["forceOff1"] = bDebugForcePowerOff1;
+      sendJson["status"]["forceOff2"] = bDebugForcePowerOff2;
       
       String jsonString = JSON.stringify(sendJson);
 
@@ -337,7 +414,7 @@ void processBT(short temp1, short temp2, short tempInternal) {
   }
 }
 
-#define BT_BUFFER_SIZE 200U
+#define BT_BUFFER_SIZE 500U
 static char bufferBT[BT_BUFFER_SIZE];
 static size_t lenBT = 0;
 
@@ -381,34 +458,106 @@ const float mVIncrement = 0.953f;  // ESP32 ADV using default -11db setting (409
 
 void displayVoltage(short voltage, int lineNo) {
   char voltageStr[30];
-
+  if (!bDebugDisplay)
+    return;
   sprintf(voltageStr, "%4hd mV", voltage);
-  displayAt(45, lineNo, 40, voltageStr);
+  displaySmall(45, lineNo, 40, voltageStr);
 }
 
 void displayRaw(unsigned short raw, int lineNo) {
   char rawStr[30];
-
+  if (!bDebugDisplay)
+    return;
+  if (lineNo == 1) {
+      displayBlankRectangle(0,0,128,10);
+  }
   sprintf(rawStr, "0x%04hx", raw);
-  displayAt(2, lineNo, 40, rawStr);
+  displaySmall(2, lineNo, 40, rawStr);
 }
 
 void displayTemperature(short temp, int lineNo) {
   char tempStr[30];
-
+  if (!bDebugDisplay)
+    return;
   sprintf(tempStr, "%3hd C", temp);
-  displayAt(100, lineNo, 40, tempStr);
+  displaySmall(100, lineNo, 40, tempStr);
 }
 
 void displayOutput(short value, int lineNo) {
   char valueStr[30];
-
+  if (!bDebugDisplay)
+    return;
+  oled.setFont(ArialMT_Plain_10);
+  oled.setTextAlignment(TEXT_ALIGN_LEFT);
+  
   oled.setColor(BLACK);
   oled.fillRect(40, 20 + 10 * lineNo, 80, 9);
   oled.setColor(WHITE);
   oled.drawProgressBar(40, 22 + 10 * lineNo, 80, 8, value * 100 / 255);
   sprintf(valueStr, "%3hd", value);
-  displayAt(1, lineNo + 2, 39, valueStr);
+  displaySmall(1, lineNo + 2, 39, valueStr);
+}
+
+void displaySmall(unsigned short x, unsigned short lineNo, unsigned short xSpan, char * text) {
+  oled.setFont(ArialMT_Plain_10);
+  oled.setTextAlignment(TEXT_ALIGN_LEFT);
+
+  oled.setColor(BLACK);
+  oled.fillRect(x, 10 * lineNo, xSpan, 10);
+  oled.setColor(WHITE);
+  oled.drawString(x, 10 * lineNo, text);
+  oled.display();
+}
+
+void standardDisplay(unsigned int temp1, int temp2, unsigned int setPoint1, int setPoint2, bool bValidate, double timeout) {
+  char valueStr[20];  
+  if (bDebugDisplay)
+    return;
+  unsigned int temp = (temp1 + temp2)/2;
+  unsigned int setPoint = (setPoint1 + setPoint2)/2;
+  if (bValidate) {
+      sprintf(valueStr, "%3 d/%3d", temp,setPoint);
+  } else {
+      sprintf(valueStr, "%3 d", temp);
+  }
+  displayBig(0,0,128,valueStr);
+  if (timeout < 0.0) {
+      timeout = 0.0;
+  }
+  int progress = sqrt(timeout/60.0)*5;
+  if (progress != previousProgress) {
+    displayBlankRectangle(0,44,128,20);
+    oled.drawProgressBar(5, 55, 110, 8, progress);
+    previousProgress = progress;
+  }
+}
+
+void standardDisplayText2(const char * message) {
+  if (bDebugDisplay)
+    return;
+  displayBig(0,1,128,message);
+}
+
+void displayFullErase() {
+  displayBlankRectangle(0,0,128,64);
+}
+void displayBlankRectangle(unsigned short x, unsigned short y, unsigned short xSpan, unsigned short ySpan) {
+  oled.setColor(BLACK);
+  oled.fillRect(x, y, xSpan, ySpan);
+  oled.setColor(WHITE);
+  oled.display();
+}
+
+
+void displayBig(unsigned short x, unsigned short lineNo, unsigned short xSpan, const char * text) {
+  oled.setFont(ArialMT_Plain_24);
+  oled.setTextAlignment(TEXT_ALIGN_LEFT);
+
+  oled.setColor(BLACK);
+  oled.fillRect(x, 24 * lineNo, xSpan, 24);
+  oled.setColor(WHITE);
+  oled.drawString(x, 24 * lineNo, text);
+  oled.display();
 }
 
 unsigned short rawToVoltagemV(unsigned short rawValue) {
@@ -425,17 +574,6 @@ short voltageToTemperature(unsigned short voltagemV) {
   temp = 1.0f / (1 / Tc1 - log(R1 / (R0 * V / (Vdd - V))) / beta); // resistor on upper leg
   temp = temp - Tz;
   return temp;
-}
-
-void displayAt(unsigned short x, unsigned short lineNo, unsigned short xSpan, char * text) {
-  oled.setFont(ArialMT_Plain_10);
-  oled.setTextAlignment(TEXT_ALIGN_LEFT);
-
-  oled.setColor(BLACK);
-  oled.fillRect(x, 10 * lineNo, xSpan, 10);
-  oled.setColor(WHITE);
-  oled.drawString(x, 10 * lineNo, text);
-  oled.display();
 }
 
 
